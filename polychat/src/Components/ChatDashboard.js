@@ -5,7 +5,9 @@ export default function ChatDashboard() {
   const [sidebarExpanded, setSidebarExpanded] = useState(false)
   const [selectedModel, setSelectedModel] = useState('gpt-4')
   const [inputValue, setInputValue] = useState('')
+  const [dropdownOpen, setDropdownOpen] = useState(false)
   const sidebarRef = useRef(null)
+  const dropdownRef = useRef(null)
 
   const toggleSidebar = () => {
     setSidebarExpanded(!sidebarExpanded)
@@ -52,8 +54,30 @@ export default function ChatDashboard() {
     }
   }, [inputValue])
 
-  const handleModelChange = (e) => {
-    setSelectedModel(e.target.value)
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setDropdownOpen(false)
+      }
+    }
+
+    if (dropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [dropdownOpen])
+
+  const handleModelChange = (modelValue) => {
+    setSelectedModel(modelValue)
+    setDropdownOpen(false)
+  }
+
+  const toggleDropdown = () => {
+    setDropdownOpen(!dropdownOpen)
   }
 
   const handleInputChange = (e) => {
@@ -99,14 +123,42 @@ export default function ChatDashboard() {
           </div>
           <div className="header-left">
             <div className="app-title">PolyChat</div>
-            <div className="model-selector">
-              <select value={selectedModel} onChange={handleModelChange}>
-                {aiModels.map(model => (
-                  <option key={model.value} value={model.value}>
-                    {model.label}
-                  </option>
-                ))}
-              </select>
+            <div className="model-selector" ref={dropdownRef}>
+              <div className="model-selector-trigger" onClick={toggleDropdown}>
+                <span className="selected-model">
+                  {aiModels.find(model => model.value === selectedModel)?.label}
+                </span>
+                <i className={`fas fa-chevron-down dropdown-icon ${dropdownOpen ? 'open' : ''}`}></i>
+              </div>
+              
+              {dropdownOpen && (
+                <div className="model-dropdown">
+                  <div className="dropdown-header">
+                    <span>Choose your model</span>
+                  </div>
+                  <div className="dropdown-options">
+                    {aiModels.map(model => (
+                      <div
+                        key={model.value}
+                        className={`dropdown-option ${selectedModel === model.value ? 'selected' : ''}`}
+                        onClick={() => handleModelChange(model.value)}
+                      >
+                        <div className="option-content">
+                          <span className="option-label">{model.label}</span>
+                          <span className="option-description">
+                            {model.value === 'gpt-4' ? 'Most capable model' : 
+                             model.value === 'gpt-3.5-turbo' ? 'Fast and efficient' : 
+                             'Advanced reasoning'}
+                          </span>
+                        </div>
+                        {selectedModel === model.value && (
+                          <i className="fas fa-check option-check"></i>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
