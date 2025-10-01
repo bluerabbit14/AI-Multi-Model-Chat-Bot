@@ -1,49 +1,53 @@
 import React, { useState, useEffect, useRef } from 'react'
 import './ChatDashboard.css'
+import { useChat } from '../hooks/useChat'
+
+// AnimatedText component for AI responses
+const AnimatedText = ({ text, speed = 30 }) => {
+  const [displayedText, setDisplayedText] = useState('');
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  useEffect(() => {
+    if (currentIndex < text.length) {
+      const timeout = setTimeout(() => {
+        setDisplayedText(prev => prev + text[currentIndex]);
+        setCurrentIndex(prev => prev + 1);
+      }, speed);
+      return () => clearTimeout(timeout);
+    }
+  }, [currentIndex, text, speed]);
+
+  useEffect(() => {
+    setDisplayedText('');
+    setCurrentIndex(0);
+  }, [text]);
+
+  return <span>{displayedText}</span>;
+};
 
 export default function ChatDashboard() {
-  const [sidebarExpanded, setSidebarExpanded] = useState(false)
-  const [selectedModel, setSelectedModel] = useState('gpt-4')
   const [inputValue, setInputValue] = useState('')
   const [dropdownOpen, setDropdownOpen] = useState(false)
-  const sidebarRef = useRef(null)
   const dropdownRef = useRef(null)
+  const messagesEndRef = useRef(null)
+  const [copiedMessageId, setCopiedMessageId] = useState(null)
+  const [attachedFiles, setAttachedFiles] = useState([])
+  const fileInputRef = useRef(null)
 
-  const toggleSidebar = () => {
-    setSidebarExpanded(!sidebarExpanded)
-  }
+  // Use the chat hook
+  const {
+    currentSession,
+    messages,
+    availableModels,
+    isLoading,
+    error,
+    sendMessage,
+    switchModel,
+    currentModel
+  } = useChat()
 
-  // Close sidebar when clicking outside (mobile only)
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      // Only close on mobile screens (<960px)
-      if (window.innerWidth < 960 && sidebarExpanded) {
-        if (sidebarRef.current && !sidebarRef.current.contains(event.target)) {
-          setSidebarExpanded(false)
-        }
-      }
-    }
+  // Don't automatically create sessions - user must click "New Chat"
 
-    const handleResize = () => {
-      // Close sidebar when switching to desktop view
-      if (window.innerWidth >= 960) {
-        setSidebarExpanded(false)
-      }
-    }
-
-    if (sidebarExpanded) {
-      document.addEventListener('mousedown', handleClickOutside)
-      document.addEventListener('touchstart', handleClickOutside)
-    }
-
-    window.addEventListener('resize', handleResize)
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-      document.removeEventListener('touchstart', handleClickOutside)
-      window.removeEventListener('resize', handleResize)
-    }
-  }, [sidebarExpanded])
 
   // Auto-resize textarea on mount and when inputValue changes
   useEffect(() => {
@@ -71,9 +75,13 @@ export default function ChatDashboard() {
     }
   }, [dropdownOpen])
 
-  const handleModelChange = (modelValue) => {
-    setSelectedModel(modelValue)
-    setDropdownOpen(false)
+  const handleModelChange = async (modelValue) => {
+    try {
+      await switchModel(modelValue)
+      setDropdownOpen(false)
+    } catch (err) {
+      console.error('Failed to switch model:', err)
+    }
   }
 
   const toggleDropdown = () => {
@@ -82,51 +90,184 @@ export default function ChatDashboard() {
 
   const handleInputChange = (e) => {
     setInputValue(e.target.value)
-    // Auto-resize textarea
     const textarea = e.target
     textarea.style.height = 'auto'
     textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px'
   }
 
+  const handleSendMessage = async () => {
+    if ((!inputValue.trim() && attachedFiles.length === 0) || isLoading) return
 
-  const aiModels = [
-    { value: 'gpt-4', label: 'GPT-4' },
-    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
-    { value: 'claude-3', label: 'Claude 3' }
-  ]
+    let messageContent = inputValue.trim()
+    
+    // Process attached files
+    if (attachedFiles.length > 0) {
+      try {
+        const fileContents = await Promise.all(
+          attachedFiles.map(async (file) => {
+            const content = await readFileContent(file)
+            return {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              content: content
+            }
+          })
+        )
+        
+        // Add file information to message content
+        const fileInfo = fileContents.map(file => 
+          `[File: ${file.name} (${file.type}, ${(file.size / 1024).toFixed(1)}KB)]`
+        ).join('\n')
+        
+        messageContent = messageContent ? 
+          `${messageContent}\n\nAttached files:\n${fileInfo}` : 
+          `Attached files:\n${fileInfo}`
+      } catch (err) {
+        console.error('Error reading files:', err)
+        alert('Error reading attached files. Please try again.')
+        return
+      }
+    }
+
+    setInputValue('')
+    setAttachedFiles([])
+
+    try {
+      await sendMessage(messageContent)
+    } catch (err) {
+      console.error('Failed to send message:', err)
+      // Optionally show error to user
+    }
+  }
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSendMessage()
+    }
+  }
+
+  const handleCopyMessage = async (messageContent, messageId) => {
+    try {
+      await navigator.clipboard.writeText(messageContent)
+      setCopiedMessageId(messageId)
+      // Reset the copied state after 2 seconds
+      setTimeout(() => {
+        setCopiedMessageId(null)
+      }, 2000)
+    } catch (err) {
+      console.error('Failed to copy text:', err)
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea')
+      textArea.value = messageContent
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+      setCopiedMessageId(messageId)
+      setTimeout(() => {
+        setCopiedMessageId(null)
+      }, 2000)
+    }
+  }
+
+  // File handling functions
+  const handleFileSelect = (event) => {
+    const files = Array.from(event.target.files)
+    const validFiles = files.filter(file => {
+      const maxSize = 10 * 1024 * 1024 // 10MB
+      const allowedTypes = [
+        'text/plain',
+        'text/csv',
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/html',
+        'application/json',
+        'text/markdown'
+      ]
+      return file.size <= maxSize && allowedTypes.includes(file.type)
+    })
+
+    if (validFiles.length !== files.length) {
+      alert('Some files were rejected. Only text, PDF, Word, HTML, JSON, and Markdown files under 10MB are allowed.')
+    }
+
+    setAttachedFiles(prev => [...prev, ...validFiles])
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const handleFileRemove = (index) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const handlePlusClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click()
+    }
+  }
+
+  const readFileContent = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = (e) => resolve(e.target.result)
+      reader.onerror = (e) => reject(e)
+      
+      if (file.type.startsWith('text/') || file.type === 'application/json') {
+        reader.readAsText(file)
+      } else {
+        reader.readAsDataURL(file)
+      }
+    })
+  }
+
+  // Auto-scroll to bottom when new messages are added
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
+
+  // Scroll to bottom when loading state changes (for typing indicator)
+  useEffect(() => {
+    if (isLoading) {
+      scrollToBottom()
+    }
+  }, [isLoading])
+
 
 
   return (
     <div className="App">
-      {/* Mobile backdrop */}
-      {sidebarExpanded && window.innerWidth < 960 && (
-        <div className="mobile-backdrop" onClick={() => setSidebarExpanded(false)}></div>
-      )}
-      
-      {/* Sidebar */}
-      <div 
-        ref={sidebarRef} 
-        className={`sidebar ${sidebarExpanded ? 'expanded' : ''}`}
-      >
-        <div className="hamburger-menu sidebar-hamburger" onClick={toggleSidebar}>
-          <i className="fas fa-bars"></i>
+      {/* Error Display */}
+      {error && (
+        <div className="error-banner">
+          <span>{error}</span>
         </div>
-        {/* Navbar items will be added here as needed */}
-      </div>
+      )}
+
+      
 
       {/* Main Content */}
       <div className="main-content">
         {/* Header */}
         <div className="header">
-          <div className="hamburger-menu header-hamburger" onClick={toggleSidebar}>
-            <i className="fas fa-bars"></i>
-          </div>
           <div className="header-left">
-            <div className="app-title">PolyChat</div>
+            <div className="app-title">
+              PolyChat
+            </div>
             <div className="model-selector" ref={dropdownRef}>
               <div className="model-selector-trigger" onClick={toggleDropdown}>
                 <span className="selected-model">
-                  {aiModels.find(model => model.value === selectedModel)?.label}
+                  {availableModels.find(model => model.model_id === currentModel)?.model_name || 
+                   (availableModels.length > 0 ? availableModels[0].model_name : 'Select Model')}
                 </span>
                 <i className={`fas fa-chevron-down dropdown-icon ${dropdownOpen ? 'open' : ''}`}></i>
               </div>
@@ -137,21 +278,17 @@ export default function ChatDashboard() {
                     <span>Choose your model</span>
                   </div>
                   <div className="dropdown-options">
-                    {aiModels.map(model => (
+                    {availableModels.map(model => (
                       <div
-                        key={model.value}
-                        className={`dropdown-option ${selectedModel === model.value ? 'selected' : ''}`}
-                        onClick={() => handleModelChange(model.value)}
+                        key={model.model_id}
+                        className={`dropdown-option ${currentModel === model.model_id ? 'selected' : ''}`}
+                        onClick={() => handleModelChange(model.model_id)}
                       >
                         <div className="option-content">
-                          <span className="option-label">{model.label}</span>
-                          <span className="option-description">
-                            {model.value === 'gpt-4' ? 'Most capable model' : 
-                             model.value === 'gpt-3.5-turbo' ? 'Fast and efficient' : 
-                             'Advanced reasoning'}
-                          </span>
+                          <span className="option-label">{model.model_name}</span>
+                          <span className="option-description">{model.description}</span>
                         </div>
-                        {selectedModel === model.value && (
+                        {currentModel === model.model_id && (
                           <i className="fas fa-check option-check"></i>
                         )}
                       </div>
@@ -165,41 +302,183 @@ export default function ChatDashboard() {
 
         {/* Chat Area */}
         <div className="chat-area">
-          <div className="greeting">
-            <span className="greeting-main">Hello, there</span>
-            <span className="greeting-sub">How can I help you today?</span>
-          </div>
-          
-          <div className="input-container">
-            <div className="input-field-wrapper">
-              <div className="input-grid">
-                <textarea
-                  className="input-field"
-                  placeholder="Ask PolyChat"
-                  value={inputValue}
-                  onChange={handleInputChange}
-                  rows="1"
+          {messages.length === 0 ? (
+            /* Initial State - Centered Greeting and Input */
+            <div className="initial-state">
+              <div className="greeting">
+                <span className="greeting-main">Hello, there</span>
+                <span className="greeting-sub">How can I help you today?</span>
+              </div>
+              
+              <div className="input-container">
+                <div className="input-field-wrapper">
+                  <div className="input-grid">
+                    <textarea
+                      className="input-field"
+                      placeholder="Ask PolyChat"
+                      value={inputValue}
+                      onChange={handleInputChange}
+                      onKeyPress={handleKeyPress}
+                      rows="1"
+                      disabled={isLoading}
+                    />
+                    <div className="voice-icon-wrapper">
+                      {!inputValue.trim() && (
+                        <i className="fas fa-microphone voice-icon"></i>
+                      )}
+                    </div>
+                    <div className="input-icons-wrapper">
+                      <i className="fas fa-plus input-icon" onClick={handlePlusClick}></i>
+                    </div>
+                    <div className="send-button-wrapper">
+                      {(inputValue.trim() || attachedFiles.length > 0) && (
+                        <button 
+                          className="send-button" 
+                          onClick={handleSendMessage}
+                          disabled={isLoading}
+                        >
+                          <i className="fas fa-paper-plane"></i>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* File Preview */}
+                {attachedFiles.length > 0 && (
+                  <div className="file-preview-container">
+                    {attachedFiles.map((file, index) => (
+                      <div key={index} className="file-preview-item">
+                        <i className="fas fa-file file-icon"></i>
+                        <span className="file-name">{file.name}</span>
+                        <span className="file-size">({(file.size / 1024).toFixed(1)}KB)</span>
+                        <button 
+                          className="file-remove-btn"
+                          onClick={() => handleFileRemove(index)}
+                        >
+                          <i className="fas fa-times"></i>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Hidden File Input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".txt,.csv,.pdf,.doc,.docx,.html,.json,.md"
+                  onChange={handleFileSelect}
+                  style={{ display: 'none' }}
                 />
-                <div className="voice-icon-wrapper">
-                  {!inputValue.trim() && (
-                    <i className="fas fa-microphone voice-icon"></i>
-                  )}
-                </div>
-                <div className="input-icons-wrapper">
-                  <i className="fas fa-plus input-icon"></i>
-                  <i className="fas fa-link input-icon"></i>
-                </div>
-                <div className="send-button-wrapper">
-                  {inputValue.trim() && (
-                    <button className="send-button">
-                      <i className="fas fa-paper-plane"></i>
-                    </button>
-                  )}
-                </div>
               </div>
             </div>
-          </div>
-
+          ) : (
+            /* Chat State - Messages and Bottom Input */
+            <>
+              <div className="messages-container">
+                <div className="messages-list">
+                  {messages.map(message => (
+                    <div key={message.id} className={`message ${message.role}`}>
+                      <div className="message-content">
+                        {message.role === 'assistant' ? (
+                          <AnimatedText text={message.content} speed={20} />
+                        ) : (
+                          message.content
+                        )}
+                      </div>
+                      <div className="message-meta">
+                        <span className="message-time">
+                          {new Date(message.created_at).toLocaleTimeString()}
+                        </span>
+                        <button 
+                          className="copy-button"
+                          onClick={() => handleCopyMessage(message.content, message.id)}
+                          title="Copy message"
+                        >
+                          <i className={`fas ${copiedMessageId === message.id ? 'fa-check' : 'fa-copy'}`}></i>
+                        </button>
+                        {message.role === 'assistant' && (
+                          <span className="message-model">
+                            {message.model_name || message.model_id || 'AI Model'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {isLoading && (
+                    <div className="message assistant">
+                      <div className="message-content">
+                        <div className="typing-indicator">
+                          <span></span>
+                          <span></span>
+                          <span></span>
+                        </div>
+                        <span className="typing-text">AI is thinking...</span>
+                      </div>
+                    </div>
+                  )}
+                  {/* Invisible element to scroll to */}
+                  <div ref={messagesEndRef} />
+                </div>
+              </div>
+              
+              <div className="input-container bottom-input">
+                <div className="input-field-wrapper">
+                  <div className="input-grid">
+                    <textarea
+                      className="input-field"
+                      placeholder="Ask PolyChat"
+                      value={inputValue}
+                      onChange={handleInputChange}
+                      onKeyPress={handleKeyPress}
+                      rows="1"
+                      disabled={isLoading}
+                    />
+                    <div className="voice-icon-wrapper">
+                      {!inputValue.trim() && (
+                        <i className="fas fa-microphone voice-icon"></i>
+                      )}
+                    </div>
+                    <div className="input-icons-wrapper">
+                      <i className="fas fa-plus input-icon" onClick={handlePlusClick}></i>
+                    </div>
+                    <div className="send-button-wrapper">
+                      {(inputValue.trim() || attachedFiles.length > 0) && (
+                        <button 
+                          className="send-button" 
+                          onClick={handleSendMessage}
+                          disabled={isLoading}
+                        >
+                          <i className="fas fa-paper-plane"></i>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* File Preview */}
+                {attachedFiles.length > 0 && (
+                  <div className="file-preview-container">
+                    {attachedFiles.map((file, index) => (
+                      <div key={index} className="file-preview-item">
+                        <i className="fas fa-file file-icon"></i>
+                        <span className="file-name">{file.name}</span>
+                        <span className="file-size">({(file.size / 1024).toFixed(1)}KB)</span>
+                        <button 
+                          className="file-remove-btn"
+                          onClick={() => handleFileRemove(index)}
+                        >
+                          <i className="fas fa-times"></i>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
