@@ -70,6 +70,12 @@
   gap: 8px;
 }
 
+.speech-error {
+  background: #ff9800;
+  top: 50px;
+  z-index: 999;
+}
+
 @keyframes slideDown {
   from {
     transform: translateY(-100%);
@@ -369,9 +375,11 @@
   grid-column: 2;
   grid-row: 1;
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
   min-height: 50px;
+  gap: 4px;
 }
 
 .voice-icon {
@@ -384,6 +392,52 @@
   align-items: center;
   justify-content: center;
   background-color: transparent;
+  transition: all 0.3s ease;
+  border-radius: 50%;
+}
+
+.voice-icon:hover {
+  color: #1976d2;
+  background-color: #f0f8ff;
+  transform: scale(1.1);
+}
+
+.voice-icon.listening {
+  color: #dc3545;
+  background-color: #f8d7da;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7);
+  }
+  70% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
+  }
+}
+
+.voice-status {
+  font-size: 10px;
+  color: #dc3545;
+  font-weight: 500;
+  text-align: center;
+  animation: fadeInOut 1.5s infinite;
+}
+
+@keyframes fadeInOut {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .input-icons-wrapper {

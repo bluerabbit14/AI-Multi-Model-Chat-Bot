@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import './ChatDashboard.css'
 import { useChat } from '../hooks/useChat'
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 
 // AnimatedText component for AI responses
 const AnimatedText = ({ text, speed = 30 }) => {
@@ -46,6 +47,17 @@ export default function ChatDashboard() {
     currentModel
   } = useChat()
 
+  // Use the speech recognition hook
+  const {
+    isListening,
+    transcript,
+    isSupported,
+    error: speechError,
+    startListening,
+    stopListening,
+    clearTranscript
+  } = useSpeechRecognition()
+
   // Don't automatically create sessions - user must click "New Chat"
 
 
@@ -57,6 +69,20 @@ export default function ChatDashboard() {
       textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px'
     }
   }, [inputValue])
+
+  // Update input value when transcript changes
+  useEffect(() => {
+    if (transcript) {
+      setInputValue(prev => prev + transcript)
+    }
+  }, [transcript])
+
+  // Clear transcript when input is manually changed
+  useEffect(() => {
+    if (inputValue && !isListening) {
+      clearTranscript()
+    }
+  }, [inputValue, isListening, clearTranscript])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -145,6 +171,27 @@ export default function ChatDashboard() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
+    }
+  }
+
+  // Voice handling functions
+  const handleVoiceClick = () => {
+    if (!isSupported) {
+      alert('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.');
+      return;
+    }
+
+    if (isListening) {
+      stopListening()
+    } else {
+      clearTranscript()
+      startListening()
+    }
+  }
+
+  const handleVoiceEnd = () => {
+    if (isListening) {
+      stopListening()
     }
   }
 
@@ -253,6 +300,13 @@ export default function ChatDashboard() {
         </div>
       )}
 
+      {/* Speech Recognition Error Display */}
+      {speechError && (
+        <div className="error-banner speech-error">
+          <span>{speechError}</span>
+        </div>
+      )}
+
       
 
       {/* Main Content */}
@@ -324,7 +378,16 @@ export default function ChatDashboard() {
                     />
                     <div className="voice-icon-wrapper">
                       {!inputValue.trim() && (
-                        <i className="fas fa-microphone voice-icon"></i>
+                        <i 
+                          className={`fas fa-microphone voice-icon ${isListening ? 'listening' : ''}`}
+                          onClick={handleVoiceClick}
+                          title={isListening ? 'Stop recording' : 'Start voice recording'}
+                        ></i>
+                      )}
+                      {isListening && (
+                        <div className="voice-status">
+                          <span>Listening...</span>
+                        </div>
                       )}
                     </div>
                     <div className="input-icons-wrapper">
@@ -438,7 +501,16 @@ export default function ChatDashboard() {
                     />
                     <div className="voice-icon-wrapper">
                       {!inputValue.trim() && (
-                        <i className="fas fa-microphone voice-icon"></i>
+                        <i 
+                          className={`fas fa-microphone voice-icon ${isListening ? 'listening' : ''}`}
+                          onClick={handleVoiceClick}
+                          title={isListening ? 'Stop recording' : 'Start voice recording'}
+                        ></i>
+                      )}
+                      {isListening && (
+                        <div className="voice-status">
+                          <span>Listening...</span>
+                        </div>
                       )}
                     </div>
                     <div className="input-icons-wrapper">
